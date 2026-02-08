@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+*.log
+.DS_Store
+.claude/
+openclaw/
+AGENTS.md
+CLAUDE.md
+idea.md
