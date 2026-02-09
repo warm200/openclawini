@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "projectType": "node",
+  "targets": [
+    {
+      "name": "dev",
+      "type": "executable",
+      "enabled": true,
+      "buildCommand": "pnpm run build",
+      "outputPath": "./dist/index.js",
+      "watchPaths": [
+        "src/**/*.ts",
+        "src/**/*.js",
+        "package.json"
+      ]
+    }
+  ]
+}

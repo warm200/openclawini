@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "projectType": "rust",
+  "targets": [
+    {
+      "name": "debug",
+      "type": "executable",
+      "enabled": true,
+      "buildCommand": "cargo build",
+      "outputPath": "./target/debug/app",
+      "watchPaths": [
+        "src/**/*.rs",
+        "Cargo.toml"
+      ]
+    }
+  ]
+}

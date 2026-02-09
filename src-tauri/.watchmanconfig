@@ -1,0 +1,52 @@
+{
+  "ignore_dirs": [
+    "**/target/**",
+    "*.7z",
+    "*.crate",
+    "*.gz",
+    "*.rar",
+    "*.rlib",
+    "*.rmeta",
+    "*.rs.bk",
+    "*.swo",
+    "*.swp",
+    "*.tar",
+    "*.temp",
+    "*.tmp",
+    "*.zip",
+    ".DS_Store",
+    ".bzr",
+    ".cursor",
+    ".git",
+    ".hg",
+    ".idea",
+    ".svn",
+    ".tmp",
+    ".vs",
+    ".vscode",
+    "Cargo.lock",
+    "Thumbs.db",
+    "desktop.ini",
+    "target",
+    "temp",
+    "tmp"
+  ],
+  "ignore_vcs": [
+    ".git",
+    ".svn",
+    ".hg",
+    ".bzr"
+  ],
+  "idle_reap_age_seconds": 300,
+  "gc_age_seconds": 259200,
+  "gc_interval_seconds": 86400,
+  "max_files": 10000,
+  "settle": 1000,
+  "_metadata": {
+    "generated_by": "poltergeist",
+    "project_type": "rust",
+    "performance_profile": "balanced",
+    "generated_at": "2026-02-09T02:49:18.985Z",
+    "total_exclusions": 30
+  }
+}

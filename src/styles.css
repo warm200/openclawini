@@ -1,7 +1,18 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: "Avenir Next", "Trebuchet MS", "Gill Sans", sans-serif;
   --color-brand: #fa5e55;
   --color-brand-light: #fb8e87;
   --color-brand-dark: #c84b44;
+}
+
+:root {
+  color: #0f172a;
+  background-color: #fffaf8;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
 }
