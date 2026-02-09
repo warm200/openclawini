@@ -42,7 +42,7 @@ The OpenClaw source is in `./openclaw/` (read-only reference). Key facts:
 │    → Detect OS/arch, verify prerequisites    │
 │                                              │
 │  Step 2: Install Node.js Runtime             │
-│    → Download portable Node.js 22 binary     │
+│    → Download portable latest stable Node.js │
 │                                              │
 │  Step 3: Install OpenClaw                    │
 │    → npm install -g openclaw@latest          │
@@ -98,13 +98,15 @@ Detect the user's OS, CPU architecture, and OS version. Run prerequisite checks 
 
 ### F2: Node.js Runtime Manager
 
-Download and manage a portable Node.js 22 binary. Users never install Node.js themselves.
+Download and manage a portable Node.js binary. Users never install Node.js themselves.
 
 **Behavior:**
 - Download official Node.js binary for detected OS/arch
+- Use the **latest stable** Node.js version at install time (must satisfy minimum runtime requirement `>=22`)
 - Extract to `<app_data_dir>/node/`
 - Show download progress bar with percentage and bytes transferred
 - Verify with `node --version` after extraction
+- Progress reaches 100% when verification completes successfully
 - Skip download if already installed (show version, allow reinstall)
 - Node.js is only used internally — not added to user's system PATH
 
@@ -119,7 +121,7 @@ Download and manage a portable Node.js 22 binary. Users never install Node.js th
 | linux | x64 | `nodejs.org/dist/v{V}/node-v{V}-linux-x64.tar.xz` | tar.xz |
 | linux | arm64 | `nodejs.org/dist/v{V}/node-v{V}-linux-arm64.tar.xz` | tar.xz |
 
-Pin version: `22.16.0`
+Fallback version (if latest lookup fails): `22.16.0`
 
 **Environment construction:**
 - Build a `PATH` env var that prepends `<app_data_dir>/node/bin/` (Unix) or `<app_data_dir>/node/` (Windows)
@@ -230,6 +232,19 @@ Open the user's default browser to the OpenClaw WebChat.
 
 ---
 
+### F7: Installation Path Manager
+
+Allow users to choose where OpenClawini stores runtime data (Node runtime, OpenClaw global install, keys, logs/state files managed under app data).
+
+**Behavior:**
+- Default path is Tauri `app_data_dir`
+- User can choose a custom absolute path
+- Backend validates the selected path is writable before saving
+- User can reset back to default path
+- After setting path, subsequent backend operations use the selected effective path
+
+---
+
 ### F0: App Shell
 
 The outer layout that contains all features. Built after individual features are implemented.
@@ -262,6 +277,7 @@ src/                          # Frontend (React)
 src-tauri/src/                # Backend (Rust)
 ├── modules/
 │   ├── platform/             # F1
+│   ├── install_location/     # F7
 │   ├── node_runtime/         # F2
 │   ├── openclaw_installer/   # F3
 │   ├── llm_config/           # F4

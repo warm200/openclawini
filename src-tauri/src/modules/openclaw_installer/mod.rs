@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -29,23 +30,23 @@ pub struct InstallProgress {
     pub detail: String,
 }
 
-const STATUS_CACHE_TTL: Duration = Duration::from_secs(8);
+const STATUS_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 struct OpenClawStatusCache {
     status: OpenClawStatus,
+    app_data_dir: PathBuf,
     checked_at: Instant,
 }
 
 #[tauri::command]
 pub fn get_openclaw_status(app: AppHandle) -> Result<OpenClawStatus, String> {
-    if let Some(cached) = read_cached_status() {
+    let app_data_dir = common::app_data_dir(&app)?;
+    if let Some(cached) = read_cached_status(&app_data_dir) {
         return Ok(cached);
     }
-
-    let app_data_dir = common::app_data_dir(&app)?;
     let status = openclaw_status_from_dir(&app_data_dir);
-    write_cached_status(&status);
+    write_cached_status(&app_data_dir, &status);
     Ok(status)
 }
 
@@ -169,7 +170,7 @@ fn install_or_update_openclaw(app: AppHandle) -> Result<OpenClawStatus, String> 
     }
 
     let openclaw_status = openclaw_status_from_dir(&app_data_dir);
-    write_cached_status(&openclaw_status);
+    write_cached_status(&app_data_dir, &openclaw_status);
     if !openclaw_status.installed {
         return Err("OpenClaw install completed but binary verification failed".to_string());
     }
@@ -197,7 +198,10 @@ fn query_latest_version(app: &AppHandle) -> Result<String, String> {
         .map_err(|e| format!("failed to query npm version: {e}"))?;
 
     if !output.status.success() {
-        return Err(format!("npm view openclaw version failed with status {}", output.status));
+        return Err(format!(
+            "npm view openclaw version failed with status {}",
+            output.status
+        ));
     }
 
     let version = String::from_utf8(output.stdout)
@@ -217,7 +221,7 @@ fn emit_install_progress(app: &AppHandle, payload: InstallProgress) -> Result<()
         .map_err(|e| format!("failed to emit openclaw install progress: {e}"))
 }
 
-fn openclaw_status_from_dir(app_data_dir: &std::path::Path) -> OpenClawStatus {
+fn openclaw_status_from_dir(app_data_dir: &Path) -> OpenClawStatus {
     let bundled = bundled_openclaw_status(app_data_dir);
     if bundled.installed {
         return bundled;
@@ -231,7 +235,7 @@ fn openclaw_status_from_dir(app_data_dir: &std::path::Path) -> OpenClawStatus {
     bundled
 }
 
-fn bundled_openclaw_status(app_data_dir: &std::path::Path) -> OpenClawStatus {
+fn bundled_openclaw_status(app_data_dir: &Path) -> OpenClawStatus {
     let binary_path = common::openclaw_binary_path(app_data_dir);
     if !binary_path.exists() {
         return OpenClawStatus {
@@ -263,6 +267,13 @@ fn system_openclaw_status() -> OpenClawStatus {
 }
 
 fn resolve_openclaw_binary_path() -> Option<String> {
+    let from_known_locations = default_openclaw_candidates()
+        .into_iter()
+        .find(|candidate| std::path::Path::new(candidate).exists());
+    if from_known_locations.is_some() {
+        return from_known_locations;
+    }
+
     #[cfg(target_os = "windows")]
     let output = Command::new("where").arg("openclaw").output().ok()?;
 
@@ -270,24 +281,18 @@ fn resolve_openclaw_binary_path() -> Option<String> {
     let output = Command::new("which").arg("openclaw").output().ok()?;
 
     let from_path_lookup = if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .and_then(|stdout| {
-                stdout
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty())
-                    .map(ToString::to_string)
-            })
+        String::from_utf8(output.stdout).ok().and_then(|stdout| {
+            stdout
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(ToString::to_string)
+        })
     } else {
         None
     };
 
-    from_path_lookup.or_else(|| {
-        default_openclaw_candidates()
-            .into_iter()
-            .find(|candidate| std::path::Path::new(candidate).exists())
-    })
+    from_path_lookup
 }
 
 fn default_openclaw_candidates() -> Vec<String> {
@@ -326,10 +331,13 @@ fn status_cache() -> &'static Mutex<Option<OpenClawStatusCache>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
-fn read_cached_status() -> Option<OpenClawStatus> {
+fn read_cached_status(app_data_dir: &Path) -> Option<OpenClawStatus> {
     let lock = status_cache();
     let guard = lock.lock().ok()?;
     let entry = guard.as_ref()?;
+    if entry.app_data_dir != app_data_dir {
+        return None;
+    }
     if entry.checked_at.elapsed() <= STATUS_CACHE_TTL {
         Some(entry.status.clone())
     } else {
@@ -337,11 +345,12 @@ fn read_cached_status() -> Option<OpenClawStatus> {
     }
 }
 
-fn write_cached_status(status: &OpenClawStatus) {
+fn write_cached_status(app_data_dir: &Path, status: &OpenClawStatus) {
     let lock = status_cache();
     if let Ok(mut guard) = lock.lock() {
         *guard = Some(OpenClawStatusCache {
             status: status.clone(),
+            app_data_dir: app_data_dir.to_path_buf(),
             checked_at: Instant::now(),
         });
     }
@@ -376,17 +385,17 @@ fn read_openclaw_version(binary: &str) -> Option<String> {
 }
 
 fn parse_version_from_output(output: &str) -> Option<String> {
-    output
-        .split_whitespace()
-        .find_map(|token| {
-            let normalized = token.trim().trim_start_matches('v');
-            let valid = normalized.chars().all(|ch| ch.is_ascii_digit() || ch == '.');
-            if valid && normalized.contains('.') {
-                Some(normalized.to_string())
-            } else {
-                None
-            }
-        })
+    output.split_whitespace().find_map(|token| {
+        let normalized = token.trim().trim_start_matches('v');
+        let valid = normalized
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '.');
+        if valid && normalized.contains('.') {
+            Some(normalized.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 fn version_is_newer(installed: &str, latest: &str) -> bool {

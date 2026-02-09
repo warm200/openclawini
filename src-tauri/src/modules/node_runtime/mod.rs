@@ -2,8 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::modules::common;
@@ -30,10 +32,25 @@ enum ArchiveKind {
     Zip,
 }
 
+const STATUS_CACHE_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone)]
+struct NodeStatusCache {
+    status: NodeStatus,
+    app_data_dir: PathBuf,
+    checked_at: Instant,
+}
+
 #[tauri::command]
 pub fn get_node_status(app: AppHandle) -> Result<NodeStatus, String> {
     let app_data_dir = common::app_data_dir(&app)?;
-    Ok(node_status_from_path(&app_data_dir))
+    if let Some(cached) = read_cached_status(&app_data_dir) {
+        return Ok(cached);
+    }
+
+    let status = node_status_from_path(&app_data_dir);
+    write_cached_status(&app_data_dir, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -47,13 +64,20 @@ pub fn get_node_env(app: AppHandle) -> Result<HashMap<String, String>, String> {
 
 #[tauri::command]
 pub fn install_node(app: AppHandle, os: String, arch: String) -> Result<NodeStatus, String> {
+    clear_cached_status();
     let app_data_dir = common::app_data_dir(&app)?;
-    let current_status = node_status_from_path(&app_data_dir);
-    if current_status.installed && current_status.version.as_deref() == Some(common::NODE_VERSION) {
-        return Ok(current_status);
+    let desired_version = resolve_latest_stable_node_version()
+        .unwrap_or_else(|| common::NODE_FALLBACK_VERSION.to_string());
+
+    let current_status = bundled_node_status(&app_data_dir);
+    if current_status.installed
+        && current_status.version.as_deref() == Some(desired_version.as_str())
+    {
+        return Ok(node_status_from_path(&app_data_dir));
     }
 
-    let (download_url, archive_kind, extension) = node_download_target(&os, &arch)?;
+    let (download_url, archive_kind, extension) =
+        node_download_target(&os, &arch, &desired_version)?;
     let tmp_dir = app_data_dir.join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("failed to create temp dir: {e}"))?;
     let archive_path = tmp_dir.join(format!("node-runtime.{extension}"));
@@ -64,7 +88,7 @@ pub fn install_node(app: AppHandle, os: String, arch: String) -> Result<NodeStat
         InstallProgress {
             stage: "downloading".to_string(),
             percent: Some(0.0),
-            detail: format!("Downloading {download_url}"),
+            detail: format!("Downloading Node.js v{desired_version} from {download_url}"),
         },
     )?;
 
@@ -89,7 +113,8 @@ pub fn install_node(app: AppHandle, os: String, arch: String) -> Result<NodeStat
     )?;
 
     if extract_dir.exists() {
-        fs::remove_dir_all(&extract_dir).map_err(|e| format!("failed to reset extract dir: {e}"))?;
+        fs::remove_dir_all(&extract_dir)
+            .map_err(|e| format!("failed to reset extract dir: {e}"))?;
     }
     fs::create_dir_all(&extract_dir).map_err(|e| format!("failed to create extract dir: {e}"))?;
 
@@ -97,7 +122,8 @@ pub fn install_node(app: AppHandle, os: String, arch: String) -> Result<NodeStat
 
     let node_root = common::node_root_dir(&app_data_dir);
     if node_root.exists() {
-        fs::remove_dir_all(&node_root).map_err(|e| format!("failed to remove existing node dir: {e}"))?;
+        fs::remove_dir_all(&node_root)
+            .map_err(|e| format!("failed to remove existing node dir: {e}"))?;
     }
 
     move_extracted_runtime(&extract_dir, &node_root)?;
@@ -109,7 +135,7 @@ pub fn install_node(app: AppHandle, os: String, arch: String) -> Result<NodeStat
         &app,
         InstallProgress {
             stage: "verifying".to_string(),
-            percent: None,
+            percent: Some(0.95),
             detail: "Checking node --version".to_string(),
         },
     )?;
@@ -118,7 +144,23 @@ pub fn install_node(app: AppHandle, os: String, arch: String) -> Result<NodeStat
     if !status.installed {
         return Err("node installation completed but verification failed".to_string());
     }
+    if status.version.as_deref() != Some(desired_version.as_str()) {
+        return Err(format!(
+            "node installation version mismatch (expected {desired_version}, got {})",
+            status.version.unwrap_or_else(|| "unknown".to_string())
+        ));
+    }
 
+    emit_progress(
+        &app,
+        InstallProgress {
+            stage: "verifying".to_string(),
+            percent: Some(1.0),
+            detail: format!("Node.js v{desired_version} is ready"),
+        },
+    )?;
+
+    write_cached_status(&app_data_dir, &status);
     Ok(status)
 }
 
@@ -196,6 +238,13 @@ fn system_node_status() -> NodeStatus {
 }
 
 fn resolve_binary_path(binary: &str) -> Option<String> {
+    let from_known_locations = default_binary_candidates(binary)
+        .into_iter()
+        .find(|candidate| Path::new(candidate).exists());
+    if from_known_locations.is_some() {
+        return from_known_locations;
+    }
+
     #[cfg(target_os = "windows")]
     let output = Command::new("where").arg(binary).output().ok()?;
 
@@ -203,24 +252,18 @@ fn resolve_binary_path(binary: &str) -> Option<String> {
     let output = Command::new("which").arg(binary).output().ok()?;
 
     let from_path_lookup = if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .and_then(|stdout| {
-                stdout
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty())
-                    .map(ToString::to_string)
-            })
+        String::from_utf8(output.stdout).ok().and_then(|stdout| {
+            stdout
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(ToString::to_string)
+        })
     } else {
         None
     };
 
-    from_path_lookup.or_else(|| {
-        default_binary_candidates(binary)
-            .into_iter()
-            .find(|candidate| Path::new(candidate).exists())
-    })
+    from_path_lookup
 }
 
 fn is_node_runtime_acceptable(version: &str) -> bool {
@@ -229,7 +272,9 @@ fn is_node_runtime_acceptable(version: &str) -> bool {
         .split('.')
         .next()
         .and_then(|value| value.parse::<u64>().ok());
-    major.map(|value| value >= 22).unwrap_or(false)
+    major
+        .map(|value| value >= common::MIN_NODE_MAJOR)
+        .unwrap_or(false)
 }
 
 fn read_node_version(binary: &str) -> Option<String> {
@@ -254,7 +299,10 @@ fn default_binary_candidates(binary: &str) -> Vec<String> {
 
     #[cfg(target_os = "linux")]
     {
-        return vec![format!("/usr/local/bin/{binary}"), format!("/usr/bin/{binary}")];
+        return vec![
+            format!("/usr/local/bin/{binary}"),
+            format!("/usr/bin/{binary}"),
+        ];
     }
 
     #[cfg(target_os = "windows")]
@@ -277,8 +325,8 @@ fn default_binary_candidates(binary: &str) -> Vec<String> {
 fn node_download_target(
     os: &str,
     arch: &str,
+    version: &str,
 ) -> Result<(String, ArchiveKind, &'static str), String> {
-    let version = common::NODE_VERSION;
     match (os, arch) {
         ("macos", "arm64") => Ok((
             format!("https://nodejs.org/dist/v{version}/node-v{version}-darwin-arm64.tar.gz"),
@@ -310,7 +358,87 @@ fn node_download_target(
             ArchiveKind::TarXz,
             "tar.xz",
         )),
-        _ => Err(format!("unsupported platform combination: os={os}, arch={arch}")),
+        _ => Err(format!(
+            "unsupported platform combination: os={os}, arch={arch}"
+        )),
+    }
+}
+
+fn resolve_latest_stable_node_version() -> Option<String> {
+    let output = Command::new("curl")
+        .args(["-fsSL", "https://nodejs.org/dist/index.json"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let entries: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let list = entries.as_array()?;
+
+    list.iter().find_map(|entry| {
+        let version = entry.get("version")?.as_str()?;
+        let normalized = common::normalize_version(version);
+        if is_stable_node_version(&normalized) {
+            Some(normalized)
+        } else {
+            None
+        }
+    })
+}
+
+fn is_stable_node_version(version: &str) -> bool {
+    if version.contains('-') {
+        return false;
+    }
+
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|value| value.parse::<u64>().ok());
+    let minor = parts.next().and_then(|value| value.parse::<u64>().ok());
+    let patch = parts.next().and_then(|value| value.parse::<u64>().ok());
+
+    major
+        .map(|value| value >= common::MIN_NODE_MAJOR)
+        .unwrap_or(false)
+        && minor.is_some()
+        && patch.is_some()
+}
+
+fn status_cache() -> &'static Mutex<Option<NodeStatusCache>> {
+    static CACHE: OnceLock<Mutex<Option<NodeStatusCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn read_cached_status(app_data_dir: &Path) -> Option<NodeStatus> {
+    let lock = status_cache();
+    let guard = lock.lock().ok()?;
+    let entry = guard.as_ref()?;
+    if entry.app_data_dir != app_data_dir {
+        return None;
+    }
+    if entry.checked_at.elapsed() <= STATUS_CACHE_TTL {
+        Some(entry.status.clone())
+    } else {
+        None
+    }
+}
+
+fn write_cached_status(app_data_dir: &Path, status: &NodeStatus) {
+    let lock = status_cache();
+    if let Ok(mut guard) = lock.lock() {
+        *guard = Some(NodeStatusCache {
+            status: status.clone(),
+            app_data_dir: app_data_dir.to_path_buf(),
+            checked_at: Instant::now(),
+        });
+    }
+}
+
+fn clear_cached_status() {
+    let lock = status_cache();
+    if let Ok(mut guard) = lock.lock() {
+        *guard = None;
     }
 }
 
@@ -351,7 +479,11 @@ fn download_archive(url: &str, destination: &Path) -> Result<(), String> {
     }
 }
 
-fn extract_archive(archive_path: &Path, destination: &Path, kind: ArchiveKind) -> Result<(), String> {
+fn extract_archive(
+    archive_path: &Path,
+    destination: &Path,
+    kind: ArchiveKind,
+) -> Result<(), String> {
     let status = match kind {
         ArchiveKind::TarGz => Command::new("tar")
             .arg("-xzf")
@@ -432,7 +564,9 @@ fn move_extracted_runtime(extract_dir: &Path, node_root: &Path) -> Result<(), St
 }
 
 fn move_directory_contents(src_dir: &Path, dst_dir: &Path) -> Result<(), String> {
-    for entry in fs::read_dir(src_dir).map_err(|e| format!("failed to read {}: {e}", src_dir.display()))? {
+    for entry in
+        fs::read_dir(src_dir).map_err(|e| format!("failed to read {}: {e}", src_dir.display()))?
+    {
         let entry = entry.map_err(|e| format!("failed to read directory entry: {e}"))?;
         let src = entry.path();
         let dst = dst_dir.join(entry.file_name());
@@ -446,13 +580,18 @@ fn move_path(src: &Path, dst: &Path) -> Result<(), String> {
         fs::create_dir_all(dst)
             .map_err(|e| format!("failed to create destination dir {}: {e}", dst.display()))?;
         move_directory_contents(src, dst)?;
-        fs::remove_dir_all(src).map_err(|e| format!("failed to remove source dir {}: {e}", src.display()))?;
+        fs::remove_dir_all(src)
+            .map_err(|e| format!("failed to remove source dir {}: {e}", src.display()))?;
         return Ok(());
     }
 
     if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create destination parent {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create destination parent {}: {e}",
+                parent.display()
+            )
+        })?;
     }
 
     match fs::rename(src, dst) {
@@ -469,7 +608,8 @@ fn move_path(src: &Path, dst: &Path) -> Result<(), String> {
             out_file
                 .write_all(&buf)
                 .map_err(|e| format!("failed to write destination file {}: {e}", dst.display()))?;
-            fs::remove_file(src).map_err(|e| format!("failed to remove source file {}: {e}", src.display()))
+            fs::remove_file(src)
+                .map_err(|e| format!("failed to remove source file {}: {e}", src.display()))
         }
     }
 }
@@ -480,13 +620,15 @@ mod tests {
 
     #[test]
     fn download_target_covers_matrix() {
-        let (url, _, _) = node_download_target("linux", "x64").expect("linux x64 supported");
+        let (url, _, _) =
+            node_download_target("linux", "x64", "25.0.0").expect("linux x64 supported");
         assert!(url.contains("linux-x64.tar.xz"));
+        assert!(url.contains("v25.0.0"));
     }
 
     #[test]
     fn unsupported_platform_returns_error() {
-        assert!(node_download_target("linux", "sparc").is_err());
+        assert!(node_download_target("linux", "sparc", "25.0.0").is_err());
     }
 
     #[test]
@@ -497,11 +639,21 @@ mod tests {
     }
 
     #[test]
+    fn stable_version_filter_rejects_prerelease_and_old_versions() {
+        assert!(is_stable_node_version("25.6.0"));
+        assert!(is_stable_node_version("22.16.0"));
+        assert!(!is_stable_node_version("21.9.0"));
+        assert!(!is_stable_node_version("26.0.0-rc.1"));
+    }
+
+    #[test]
     fn default_candidates_include_homebrew_on_macos() {
         #[cfg(target_os = "macos")]
         {
             let candidates = default_binary_candidates("node");
-            assert!(candidates.iter().any(|value| value == "/opt/homebrew/bin/node"));
+            assert!(candidates
+                .iter()
+                .any(|value| value == "/opt/homebrew/bin/node"));
         }
     }
 }

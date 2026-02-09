@@ -71,12 +71,17 @@ pub fn save_llm_config(
     model: String,
     api_key: Option<String>,
 ) -> Result<(), String> {
-    let provider_info = provider_by_id(&provider)
-        .ok_or_else(|| format!("unknown provider: {provider}"))?;
+    let provider_info =
+        provider_by_id(&provider).ok_or_else(|| format!("unknown provider: {provider}"))?;
 
-    let model_valid = provider_info.models.iter().any(|candidate| candidate.id == model);
+    let model_valid = provider_info
+        .models
+        .iter()
+        .any(|candidate| candidate.id == model);
     if !model_valid {
-        return Err(format!("model {model} is not valid for provider {provider}"));
+        return Err(format!(
+            "model {model} is not valid for provider {provider}"
+        ));
     }
 
     let config_path = common::openclaw_config_path()?;
@@ -109,16 +114,14 @@ pub fn save_llm_config(
         }
 
         let mut keys = load_api_keys(app)?;
-        if let Some(key_value) = api_key
-            .and_then(|value| {
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            })
-        {
+        if let Some(key_value) = api_key.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }) {
             keys.insert(env_name, key_value);
             write_keys(&keys_path, &keys)?;
         }
@@ -138,7 +141,8 @@ pub fn load_api_keys(app: AppHandle) -> Result<HashMap<String, String>, String> 
     let raw = std::fs::read_to_string(&keys_path)
         .map_err(|e| format!("failed to read {}: {e}", keys_path.display()))?;
 
-    serde_json::from_str(&raw).map_err(|e| format!("invalid keys json in {}: {e}", keys_path.display()))
+    serde_json::from_str(&raw)
+        .map_err(|e| format!("invalid keys json in {}: {e}", keys_path.display()))
 }
 
 fn providers() -> Vec<ProviderInfo> {
@@ -212,8 +216,8 @@ fn read_selected_model() -> Result<Option<String>, String> {
 
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("invalid json in {}: {e}", path.display()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("invalid json in {}: {e}", path.display()))?;
 
     Ok(parsed
         .get("agent")
@@ -223,8 +227,8 @@ fn read_selected_model() -> Result<Option<String>, String> {
 }
 
 fn write_keys(path: &std::path::Path, keys: &HashMap<String, String>) -> Result<(), String> {
-    let serialized = serde_json::to_string_pretty(keys)
-        .map_err(|e| format!("failed to serialize keys: {e}"))?;
+    let serialized =
+        serde_json::to_string_pretty(keys).map_err(|e| format!("failed to serialize keys: {e}"))?;
     std::fs::write(path, serialized).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 

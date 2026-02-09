@@ -7,6 +7,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             modules::platform::detect_os,
             modules::platform::check_prerequisites,
+            modules::install_location::get_install_path_state,
+            modules::install_location::set_install_path,
+            modules::install_location::reset_install_path,
             modules::node_runtime::get_node_status,
             modules::node_runtime::install_node,
             modules::node_runtime::get_node_env,

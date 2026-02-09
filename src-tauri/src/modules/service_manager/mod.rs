@@ -264,7 +264,8 @@ pub fn get_gateway_status() -> GatewayStatus {
 
 #[tauri::command]
 pub async fn health_check(port: u16) -> bool {
-    let probe = tauri::async_runtime::spawn_blocking(move || health_check_via_subprocess(port)).await;
+    let probe =
+        tauri::async_runtime::spawn_blocking(move || health_check_via_subprocess(port)).await;
     match probe {
         Ok(Some(healthy)) => healthy,
         Ok(None) | Err(_) => health_check_inner(port),
@@ -315,7 +316,11 @@ fn wait_until_running(app: AppHandle, port: u16) {
                     runtime.state = "running".to_string();
                     runtime.error = None;
                     let _ = emit_gateway_status(&app, runtime.snapshot());
-                    let _ = emit_gateway_log(&app, format!("gateway is running on port {port}"), "info");
+                    let _ = emit_gateway_log(
+                        &app,
+                        format!("gateway is running on port {port}"),
+                        "info",
+                    );
                 }
             }
             return;

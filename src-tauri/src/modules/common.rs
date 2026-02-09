@@ -1,19 +1,53 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
-pub const NODE_VERSION: &str = "22.16.0";
+pub const MIN_NODE_MAJOR: u64 = 22;
+pub const NODE_FALLBACK_VERSION: &str = "22.16.0";
 pub const DEFAULT_GATEWAY_PORT: u16 = 18_789;
 
 pub fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app_data_dir: {e}"))?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create app_data_dir: {e}"))?;
+    let dir = get_install_path_override(app)?.unwrap_or(default_app_data_dir(app)?);
+    validate_writable_dir(&dir)?;
     Ok(dir)
+}
+
+pub fn default_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve default app_data_dir: {e}"))
+}
+
+pub fn get_install_path_override(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    let settings = read_settings(app)?;
+    Ok(settings
+        .install_path
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from))
+}
+
+pub fn set_install_path_override(app: &AppHandle, path: String) -> Result<PathBuf, String> {
+    let normalized = normalize_user_path(path)?;
+    validate_writable_dir(&normalized)?;
+
+    let mut settings = read_settings(app)?;
+    settings.install_path = Some(normalized.to_string_lossy().to_string());
+    write_settings(app, &settings)?;
+
+    Ok(normalized)
+}
+
+pub fn reset_install_path_override(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut settings = read_settings(app)?;
+    settings.install_path = None;
+    write_settings(app, &settings)?;
+
+    let default_dir = default_app_data_dir(app)?;
+    validate_writable_dir(&default_dir)?;
+    Ok(default_dir)
 }
 
 pub fn node_root_dir(app_data_dir: &Path) -> PathBuf {
@@ -52,7 +86,9 @@ pub fn openclaw_binary_path(app_data_dir: &Path) -> PathBuf {
     if cfg!(target_os = "windows") {
         openclaw_global_dir(app_data_dir).join("openclaw.cmd")
     } else {
-        openclaw_global_dir(app_data_dir).join("bin").join("openclaw")
+        openclaw_global_dir(app_data_dir)
+            .join("bin")
+            .join("openclaw")
     }
 }
 
@@ -89,7 +125,11 @@ pub fn prepend_path_env(base_env: &HashMap<String, String>, node_path_prefix: &P
         }
     }
 
-    path_parts.join(if cfg!(target_os = "windows") { ";" } else { ":" })
+    path_parts.join(if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    })
 }
 
 pub fn iso_utc_now() -> String {
@@ -134,6 +174,75 @@ pub fn iso_utc_now() -> String {
     format!("{unix_secs}")
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct Settings {
+    install_path: Option<String>,
+}
+
+fn settings_file_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("failed to resolve app_config_dir: {e}"))?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| {
+        format!(
+            "failed to create app_config_dir {}: {e}",
+            config_dir.display()
+        )
+    })?;
+    Ok(config_dir.join("settings.json"))
+}
+
+fn read_settings(app: &AppHandle) -> Result<Settings, String> {
+    let file_path = settings_file_path(app)?;
+    if !file_path.exists() {
+        return Ok(Settings::default());
+    }
+
+    let raw = std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("failed to read settings {}: {e}", file_path.display()))?;
+    serde_json::from_str::<Settings>(&raw)
+        .map_err(|e| format!("failed to parse settings {}: {e}", file_path.display()))
+}
+
+fn write_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+    let file_path = settings_file_path(app)?;
+    let serialized = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("failed to serialize settings: {e}"))?;
+    std::fs::write(&file_path, serialized)
+        .map_err(|e| format!("failed to write settings {}: {e}", file_path.display()))
+}
+
+fn normalize_user_path(path: String) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("installation path cannot be empty".to_string());
+    }
+
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+
+    let cwd = std::env::current_dir().map_err(|e| format!("failed to resolve current dir: {e}"))?;
+    Ok(cwd.join(candidate))
+}
+
+fn validate_writable_dir(path: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(path)
+        .map_err(|e| format!("failed to create directory {}: {e}", path.display()))?;
+
+    let marker = path.join(".openclawini-write-test");
+    std::fs::write(&marker, b"openclawini")
+        .map_err(|e| format!("directory is not writable {}: {e}", path.display()))?;
+    std::fs::remove_file(&marker).map_err(|e| {
+        format!(
+            "failed to cleanup write test file {}: {e}",
+            marker.display()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +250,10 @@ mod tests {
     #[test]
     fn normalize_version_trims_v_prefix() {
         assert_eq!(normalize_version("v22.16.0\n"), "22.16.0");
+    }
+
+    #[test]
+    fn normalize_user_path_rejects_empty_input() {
+        assert!(normalize_user_path(" ".to_string()).is_err());
     }
 }

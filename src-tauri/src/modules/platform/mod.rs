@@ -65,14 +65,19 @@ fn normalize_arch(value: &str) -> String {
 fn detect_os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        return command_output("sw_vers", &["-productVersion"]).unwrap_or_else(|| "unknown".to_string());
+        return command_output("sw_vers", &["-productVersion"])
+            .unwrap_or_else(|| "unknown".to_string());
     }
 
     #[cfg(target_os = "windows")]
     {
         return command_output(
             "powershell",
-            &["-NoProfile", "-Command", "[System.Environment]::OSVersion.Version.ToString()"],
+            &[
+                "-NoProfile",
+                "-Command",
+                "[System.Environment]::OSVersion.Version.ToString()",
+            ],
         )
         .or_else(|| command_output("cmd", &["/C", "ver"]))
         .unwrap_or_else(|| "unknown".to_string());
@@ -159,7 +164,8 @@ fn free_bytes(path: &Path) -> Result<u64, String> {
             return Err("df returned non-zero status".to_string());
         }
 
-        let stdout = String::from_utf8(output.stdout).map_err(|e| format!("df output decode failed: {e}"))?;
+        let stdout = String::from_utf8(output.stdout)
+            .map_err(|e| format!("df output decode failed: {e}"))?;
         let line = stdout
             .lines()
             .nth(1)
@@ -207,9 +213,9 @@ fn network_check() -> PrereqCheck {
         }
     };
 
-    let reachable = address_candidates.into_iter().any(|address| {
-        TcpStream::connect_timeout(&address, Duration::from_secs(5)).is_ok()
-    });
+    let reachable = address_candidates
+        .into_iter()
+        .any(|address| TcpStream::connect_timeout(&address, Duration::from_secs(5)).is_ok());
 
     if reachable {
         PrereqCheck {

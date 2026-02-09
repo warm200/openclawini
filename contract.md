@@ -42,7 +42,7 @@ No arguments. Returns whether Node.js is installed, its version, and binary path
 ```
 invoke("install_node", { os: string, arch: string }) → NodeStatus
 ```
-Downloads and extracts Node.js for the given platform. Emits `node:progress` events during download. Returns the final status on completion.
+Downloads and extracts the latest stable Node.js for the given platform (fallback version if lookup fails). Emits `node:progress` events during download and verification. Returns the final status on completion.
 
 #### `get_node_env`
 ```
@@ -135,6 +135,28 @@ invoke("health_check", { port: number }) → boolean
 ```
 HTTP GET to `http://127.0.0.1:{port}/`. Returns true if 2xx response.
 Implementation note: backend runs this probe in a background worker/subprocess with a short timeout so the UI thread remains responsive during periodic polling.
+
+---
+
+### F7: Installation Path Manager
+
+#### `get_install_path_state`
+```
+invoke("get_install_path_state") → InstallPathState
+```
+No arguments. Returns default, selected, and effective installation paths.
+
+#### `set_install_path`
+```
+invoke("set_install_path", { path: string }) → InstallPathState
+```
+Sets a custom writable installation path and returns updated path state.
+
+#### `reset_install_path`
+```
+invoke("reset_install_path") → InstallPathState
+```
+Resets custom installation path back to default Tauri app data path.
 
 ---
 
@@ -249,6 +271,15 @@ These types are used in commands and events above. Frontend defines them in Type
 }
 ```
 
+### InstallPathState
+```typescript
+{
+  default_path: string
+  selected_path: string | null
+  effective_path: string
+}
+```
+
 ### GatewayStatus
 ```typescript
 {
@@ -283,4 +314,5 @@ Track which features have been implemented.
 | F4: LLM Configuration | Yes | Yes | Yes |
 | F5: Service Manager | Yes | Yes | Yes |
 | F6: Browser Launcher | Yes | Yes | Yes |
+| F7: Installation Path Manager | Yes | Yes | No |
 | F0: App Shell | — | — | Yes |

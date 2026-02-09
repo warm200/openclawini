@@ -23,7 +23,9 @@ export function NodeRuntimeStep({ onContinue, os, arch }: NodeRuntimeStepProps) 
     <section className="space-y-5">
       <header>
         <h2 className="text-2xl font-semibold text-slate-900">Step 2: Install Node.js Runtime</h2>
-        <p className="text-sm text-slate-600">Download and verify internal Node.js 22.16.0.</p>
+        <p className="text-sm text-slate-600">
+          Download and verify the latest stable internal Node.js runtime (minimum supported: 22).
+        </p>
         {loading ? (
           <p className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
             <span className="h-3 w-3 animate-spin rounded-full border border-slate-400 border-t-transparent" />
