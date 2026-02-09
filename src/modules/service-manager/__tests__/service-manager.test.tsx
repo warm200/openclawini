@@ -178,7 +178,8 @@ describe("service-manager module", () => {
     });
 
     expect(result.current.error).toBe("spawn failed: permission denied");
-    expect(result.current.logs.at(-1)?.line).toContain("spawn failed: permission denied");
-    expect(result.current.logs.at(-1)?.level).toBe("error");
+    const lastLog = result.current.logs[result.current.logs.length - 1];
+    expect(lastLog?.line).toContain("spawn failed: permission denied");
+    expect(lastLog?.level).toBe("error");
   });
 });
