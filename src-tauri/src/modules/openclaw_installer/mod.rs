@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -80,6 +81,27 @@ pub fn check_openclaw_update(app: AppHandle) -> Result<UpdateInfo, String> {
 }
 
 fn install_or_update_openclaw(app: AppHandle) -> Result<OpenClawStatus, String> {
+    let lock = install_lock();
+    {
+        let mut running = lock
+            .lock()
+            .map_err(|_| "openclaw install lock poisoned".to_string())?;
+        if *running {
+            return Err("OpenClaw install is already in progress".to_string());
+        }
+        *running = true;
+    }
+
+    let result = install_or_update_openclaw_inner(app);
+
+    if let Ok(mut running) = lock.lock() {
+        *running = false;
+    }
+
+    result
+}
+
+fn install_or_update_openclaw_inner(app: AppHandle) -> Result<OpenClawStatus, String> {
     clear_cached_status();
 
     let node_status = node_runtime::get_node_status(app.clone())?;
@@ -178,6 +200,11 @@ fn install_or_update_openclaw(app: AppHandle) -> Result<OpenClawStatus, String> 
     Ok(openclaw_status)
 }
 
+fn install_lock() -> &'static Mutex<bool> {
+    static LOCK: OnceLock<Mutex<bool>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(false))
+}
+
 fn query_latest_version(app: &AppHandle) -> Result<String, String> {
     let node_status = node_runtime::get_node_status(app.clone())?;
     if !node_status.installed {
@@ -236,23 +263,68 @@ fn openclaw_status_from_dir(app_data_dir: &Path) -> OpenClawStatus {
 }
 
 fn bundled_openclaw_status(app_data_dir: &Path) -> OpenClawStatus {
-    let binary_path = common::openclaw_binary_path(app_data_dir);
-    if !binary_path.exists() {
+    for binary_path in bundled_openclaw_candidates(app_data_dir) {
+        if !binary_path.exists() {
+            continue;
+        }
+
+        let binary = binary_path.to_string_lossy().to_string();
+        let version = read_openclaw_version(&binary);
+        if version.is_none() {
+            continue;
+        }
+
         return OpenClawStatus {
-            installed: false,
-            version: None,
-            binary_path: None,
+            installed: true,
+            version,
+            binary_path: Some(binary),
         };
     }
 
-    let binary = binary_path.to_string_lossy().to_string();
-    let version = read_openclaw_version(&binary);
-
     OpenClawStatus {
-        installed: version.is_some(),
-        version,
-        binary_path: Some(binary_path.to_string_lossy().to_string()),
+        installed: false,
+        version: None,
+        binary_path: None,
     }
+}
+
+fn bundled_openclaw_candidates(app_data_dir: &Path) -> Vec<PathBuf> {
+    let prefix_dir = common::openclaw_global_dir(app_data_dir);
+    let mut candidates = Vec::new();
+
+    if cfg!(target_os = "windows") {
+        candidates.push(prefix_dir.join("openclaw.cmd"));
+        candidates.push(prefix_dir.join("openclaw.exe"));
+        candidates.push(prefix_dir.join("bin").join("openclaw.cmd"));
+        candidates.push(prefix_dir.join("bin").join("openclaw.exe"));
+        candidates.push(
+            prefix_dir
+                .join("node_modules")
+                .join(".bin")
+                .join("openclaw.cmd"),
+        );
+        candidates.push(
+            prefix_dir
+                .join("node_modules")
+                .join(".bin")
+                .join("openclaw.exe"),
+        );
+    } else {
+        candidates.push(common::openclaw_binary_path(app_data_dir));
+        candidates.push(prefix_dir.join("openclaw"));
+        candidates.push(
+            prefix_dir
+                .join("node_modules")
+                .join(".bin")
+                .join("openclaw"),
+        );
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
 }
 
 fn system_openclaw_status() -> OpenClawStatus {
@@ -374,10 +446,14 @@ fn read_openclaw_version(binary: &str) -> Option<String> {
             continue;
         }
 
-        if let Ok(stdout) = String::from_utf8(output.stdout) {
-            if let Some(version) = parse_version_from_output(&stdout) {
-                return Some(version);
-            }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(version) = parse_version_from_output(&stdout) {
+            return Some(version);
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(version) = parse_version_from_output(&stderr) {
+            return Some(version);
         }
     }
 
@@ -385,17 +461,59 @@ fn read_openclaw_version(binary: &str) -> Option<String> {
 }
 
 fn parse_version_from_output(output: &str) -> Option<String> {
-    output.split_whitespace().find_map(|token| {
-        let normalized = token.trim().trim_start_matches('v');
-        let valid = normalized
-            .chars()
-            .all(|ch| ch.is_ascii_digit() || ch == '.');
-        if valid && normalized.contains('.') {
-            Some(normalized.to_string())
-        } else {
-            None
+    let sanitized = strip_ansi_sequences(output);
+    sanitized.split_whitespace().find_map(parse_version_token)
+}
+
+fn parse_version_token(token: &str) -> Option<String> {
+    let normalized = token
+        .trim()
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
+        .trim_start_matches('v');
+
+    let valid = normalized
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || ch == '.');
+    if valid && normalized.contains('.') {
+        Some(normalized.to_string())
+    } else {
+        None
+    }
+}
+
+fn strip_ansi_sequences(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut escape = false;
+    let mut csi = false;
+
+    for ch in input.chars() {
+        if escape {
+            if !csi {
+                if ch == '[' {
+                    csi = true;
+                } else {
+                    escape = false;
+                }
+                continue;
+            }
+
+            if ('@'..='~').contains(&ch) {
+                escape = false;
+                csi = false;
+            }
+            continue;
         }
-    })
+
+        if ch == '\u{1b}' {
+            escape = true;
+            csi = false;
+            continue;
+        }
+
+        output.push(ch);
+    }
+
+    output
 }
 
 fn version_is_newer(installed: &str, latest: &str) -> bool {
@@ -456,6 +574,12 @@ mod tests {
         );
         assert_eq!(
             parse_version_from_output("OpenClaw 2026.2.1 (build)"),
+            Some("2026.2.1".to_string())
+        );
+        assert_eq!(
+            parse_version_from_output(
+                "\u{1b}[32mOpenClaw\u{1b}[0m version: \u{1b}[1m2026.2.1\u{1b}[0m"
+            ),
             Some("2026.2.1".to_string())
         );
     }
