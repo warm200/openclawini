@@ -59,9 +59,19 @@ export function ServiceManagerStep({ onContinue }: ServiceManagerStepProps) {
             void start();
           }}
           disabled={transition || status.state === "running"}
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {starting ? "Starting..." : "Start"}
+          {starting ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-white border-t-transparent"
+              />
+              Starting...
+            </>
+          ) : (
+            "Start"
+          )}
         </button>
         <button
           type="button"
@@ -69,9 +79,19 @@ export function ServiceManagerStep({ onContinue }: ServiceManagerStepProps) {
             void stop();
           }}
           disabled={transition || status.state !== "running"}
-          className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {stopping ? "Stopping..." : "Stop"}
+          {stopping ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-white border-t-transparent"
+              />
+              Stopping...
+            </>
+          ) : (
+            "Stop"
+          )}
         </button>
         <button
           type="button"

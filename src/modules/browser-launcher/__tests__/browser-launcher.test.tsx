@@ -45,4 +45,29 @@ describe("browser-launcher module", () => {
       expect(writeTextMock).toHaveBeenCalledWith("http://127.0.0.1:18789");
     });
   });
+
+  it("shows pending copy state while clipboard write is running", async () => {
+    let releaseWrite = () => {};
+    writeTextMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseWrite = () => {
+            resolve();
+          };
+        }),
+    );
+
+    render(<BrowserLauncherStep onFinish={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy URL" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Copying..." })).toBeDisabled();
+    });
+
+    releaseWrite();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Copy URL" })).toBeEnabled();
+    });
+  });
 });

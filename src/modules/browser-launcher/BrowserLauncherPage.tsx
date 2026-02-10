@@ -1,7 +1,7 @@
 import { useBrowserLauncherStatus } from "./useBrowserLauncherStatus";
 
 export function BrowserLauncherPage() {
-  const { url, opening, error, openWebChat, copyUrl } = useBrowserLauncherStatus();
+  const { url, opening, copying, error, openWebChat, copyUrl } = useBrowserLauncherStatus();
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -20,19 +20,40 @@ export function BrowserLauncherPage() {
           onClick={() => {
             void openWebChat();
           }}
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           disabled={opening}
         >
-          {opening ? "Opening..." : "Open WebChat"}
+          {opening ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-white border-t-transparent"
+              />
+              Opening...
+            </>
+          ) : (
+            "Open WebChat"
+          )}
         </button>
         <button
           type="button"
           onClick={() => {
             void copyUrl();
           }}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={copying}
         >
-          Copy URL
+          {copying ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-500 border-t-transparent"
+              />
+              Copying...
+            </>
+          ) : (
+            "Copy URL"
+          )}
         </button>
       </div>
     </section>

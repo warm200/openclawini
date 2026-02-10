@@ -37,19 +37,40 @@ export function NodeRuntimePage() {
           onClick={() => {
             void refresh();
           }}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={loading || installing}
         >
-          {loading ? "Refreshing..." : "Refresh"}
+          {loading ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-500 border-t-transparent"
+              />
+              Refreshing...
+            </>
+          ) : (
+            "Refresh"
+          )}
         </button>
         <button
           type="button"
           onClick={() => {
             void installNode();
           }}
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
+          className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           disabled={installing}
         >
-          {installing ? "Installing..." : "Install/Reinstall"}
+          {installing ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-white border-t-transparent"
+              />
+              Installing...
+            </>
+          ) : (
+            "Install/Reinstall"
+          )}
         </button>
       </div>
     </section>

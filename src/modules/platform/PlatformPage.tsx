@@ -44,9 +44,20 @@ export function PlatformPage() {
         onClick={() => {
           void refresh();
         }}
-        className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+        disabled={loading}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {loading ? "Refreshing..." : "Refresh"}
+        {loading ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-500 border-t-transparent"
+            />
+            Refreshing...
+          </>
+        ) : (
+          "Refresh"
+        )}
       </button>
     </section>
   );

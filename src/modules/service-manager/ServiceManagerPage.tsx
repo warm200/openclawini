@@ -45,33 +45,63 @@ export function ServiceManagerPage() {
       <div className="flex flex-wrap gap-3">
         <button
           type="button"
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           disabled={transition || status.state === "running"}
           onClick={() => {
             void start();
           }}
         >
-          {starting ? "Starting..." : "Start"}
+          {starting ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-white border-t-transparent"
+              />
+              Starting...
+            </>
+          ) : (
+            "Start"
+          )}
         </button>
         <button
           type="button"
-          className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           disabled={transition || status.state !== "running"}
           onClick={() => {
             void stop();
           }}
         >
-          {stopping ? "Stopping..." : "Stop"}
+          {stopping ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-white border-t-transparent"
+              />
+              Stopping...
+            </>
+          ) : (
+            "Stop"
+          )}
         </button>
         <button
           type="button"
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-40"
-          disabled={starting || stopping}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={starting || stopping || loading}
           onClick={() => {
             void refresh();
           }}
         >
-          {loading ? "Refreshing..." : "Refresh"}
+          {loading ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-500 border-t-transparent"
+              />
+              Refreshing...
+            </>
+          ) : (
+            "Refresh"
+          )}
         </button>
       </div>
 

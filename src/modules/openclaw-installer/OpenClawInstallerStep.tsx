@@ -51,9 +51,19 @@ export function OpenClawInstallerStep({ onContinue }: OpenClawInstallerStepProps
             void install();
           }}
           disabled={installing}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {installing ? "Installing..." : "Install OpenClaw"}
+          {installing ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-500 border-t-transparent"
+              />
+              Installing...
+            </>
+          ) : (
+            "Install OpenClaw"
+          )}
         </button>
 
         <button
